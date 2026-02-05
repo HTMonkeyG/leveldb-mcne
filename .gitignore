@@ -1,0 +1,19 @@
+# Files
+
+# Wildcard files.
+*.a
+*.o
+*.dll
+*.exe
+*.bak
+*.ini
+test*
+!libraries/leveldb/lib/*.a
+
+# Folders
+.vscode/
+dist/
+pack/
+.VSCodeCounter/
+.idea/
+packaging/
