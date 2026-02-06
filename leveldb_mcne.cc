@@ -1,3 +1,27 @@
+// ----------------------------------------------------------------------------
+// MIT License
+// 
+// Copyright (c) 2026 HTMonkeyG
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+// ----------------------------------------------------------------------------
+
 #include "leveldb_mcne.h"
 
 namespace leveldb {
@@ -95,10 +119,6 @@ McneRandomAccessFile::McneRandomAccessFile(
     isEncrypted = false;
 }
 
-McneRandomAccessFile::~McneRandomAccessFile() {
-  delete pFile;
-};
-
 Status McneRandomAccessFile::Read(
   uint64_t offset,
   size_t n,
@@ -136,10 +156,6 @@ McneWritableFile::McneWritableFile(
     isEncrypted = false;
 }
 
-McneWritableFile::~McneWritableFile() {
-  delete pFile;
-}
-
 Status McneWritableFile::Append(
   const Slice &data
 ) {
@@ -172,8 +188,13 @@ McneWrapper::McneWrapper(
   assert(pEnv != nullptr);
 }
 
-McneWrapper::~McneWrapper() {
-  delete target();
+McneWrapper::McneWrapper(
+  const Slice &key
+)
+  : EnvWrapper(Env::Default())
+  , key(key)
+{
+
 }
 
 Status McneWrapper::NewSequentialFile(

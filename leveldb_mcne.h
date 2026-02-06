@@ -1,3 +1,27 @@
+// ----------------------------------------------------------------------------
+// MIT License
+// 
+// Copyright (c) 2026 HTMonkeyG
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+// ----------------------------------------------------------------------------
+
 #ifndef STORAGE_LEVELDB_INCLUDE_MCNE_H_
 #define STORAGE_LEVELDB_INCLUDE_MCNE_H_
 
@@ -45,7 +69,7 @@ public:
     RandomAccessFile *pFile,
     const Slice &key);
 
-  virtual ~McneRandomAccessFile() override;
+  virtual ~McneRandomAccessFile() override { delete pFile; }
 
   virtual Status Read(
     uint64_t offset,
@@ -73,7 +97,7 @@ public:
     WritableFile *pFile,
     const Slice &key);
 
-  virtual ~McneWritableFile() override;
+  virtual ~McneWritableFile() override { delete pFile; }
 
   virtual Status Append(
     const Slice &data
@@ -107,12 +131,17 @@ public:
 
   // Create a McneWrapper Env. If a zero-length Slice is passed, the database
   // will be considered as unencrypted.
+  // We must ensure the key is valid during the database is opened. *pEnv must
+  // be constructed with new operator.
   explicit McneWrapper(
     Env *pEnv,
-    const Slice &key = "88329851"
-  );
+    const Slice &key = "88329851");
 
-  ~McneWrapper() override;
+  // Create a McneWrapper with default Env.
+  explicit McneWrapper(
+    const Slice &key = "88329851");
+
+  ~McneWrapper() override { delete target(); }
 
   Status NewSequentialFile(
     const std::string &fname,
