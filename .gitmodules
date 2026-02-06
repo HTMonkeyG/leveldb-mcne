@@ -1,3 +1,4 @@
 [submodule "deps/leveldb-mcpe"]
 	path = deps/leveldb-mcpe
-	url = https://github.com/extremeheat/leveldb-mcpe
+	url = https://github.com/HTMonkeyG/leveldb-mcpe
+	branch = r/extremeheat
