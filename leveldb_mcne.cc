@@ -31,6 +31,8 @@ static const uint64_t kTableMagicNumber = 0xdb4775248b80fb57ull;
 
 namespace leveldb {
 
+namespace {
+
 // XOR encryption.
 static void PerformXorOn(
   char *scratch,
@@ -38,6 +40,9 @@ static void PerformXorOn(
   const Slice &key,
   size_t offset
 ) {
+  if (!key.size())
+    return;
+
   offset %= key.size();
 
   for (size_t i = 0, j = offset; i < data->size(); i++, j++) {
@@ -54,143 +59,155 @@ static bool MaybeEncrypted(
   if (fname.length() < 4)
     return true;
 
-  if (fname.substr(fname.length() - 4) == ".log")
-    // We do not encrypt .log files.
+  // We do not encrypt these files.
+  if (fname.find(".log") != std::string::npos)
+    return false;
+  if (fname.find("LOCK") != std::string::npos)
+    return false;
+  if (fname.find(".json") != std::string::npos)
+    return false;
+  if (fname.find(".bak") != std::string::npos)
     return false;
 
   return true;
 }
 
+// namespace <annoymous>
+}
+
 // - McneSequentialFile.
 
-McneSequentialFile::McneSequentialFile(
-  SequentialFile *pFile,
-  const Slice &key
-)
-  : pFile(pFile)
-  , key(key)
-  , offset(0)
-  , isEncrypted(true)
-{
-  assert(pFile != nullptr);
-
-  if (key.size() == 0)
-    isEncrypted = false;
-}
-
-Status McneSequentialFile::Read(
-  size_t n,
-  Slice *result,
-  char *scratch
-) {
-  // We have skipped the header on the creation.
-  Status s = pFile->Read(n, result, scratch);
-
-  if (!isEncrypted || !s.ok())
-    return s;
-
-  PerformXorOn(scratch, result, key, offset);
-  offset += n;
-
-  return s;
-}
-
-Status McneSequentialFile::Skip(
-  uint64_t n
-) {
-  Status s = pFile->Skip(n);
-  
-  if (!s.ok())
-    return s;
-
-  offset += n;
-
-  return s;
-}
-
-// - McneRandomAccessFile.
-
-McneRandomAccessFile::McneRandomAccessFile(
-  RandomAccessFile *pFile,
-  const Slice &key
-)
-  : pFile(pFile)
-  , key(key)
-  , isEncrypted(true)
-{
-  assert(pFile != nullptr);
-
-  if (key.size() == 0)
-    isEncrypted = false;
-}
-
-Status McneRandomAccessFile::Read(
-  uint64_t offset,
-  size_t n,
-  Slice *result,
-  char *scratch
-) const {
-  Status s = pFile->Read(
-    McneWrapper::kMagicNumSize + offset,
-    n,
-    result,
-    scratch);
-
-  if (!isEncrypted || !s.ok())
-    return s;
-
-  PerformXorOn(scratch, result, key, offset);
-
-  return s;
-}
-
-// - McneWritableFile.
-
-McneWritableFile::McneWritableFile(
-  WritableFile *pFile,
-  const Slice &key
-)
-  : pFile(pFile)
-  , key(key)
-  , offset(0)
-  , isEncrypted(true)
-{
-  assert(pFile != nullptr);
-
-  if (key.size() == 0)
-    isEncrypted = false;
-}
-
-Status McneWritableFile::Append(
-  const Slice &data
-) {
-  std::string localData = data.ToString();
-  Slice enc = Slice{localData};
-
-  if (isEncrypted) {
-    PerformXorOn(
-      &localData[0],
-      &enc,
-      key,
-      offset);
+// XOR encrypted file.
+class DLLX McneSequentialFile: public SequentialFile {
+public:
+  McneSequentialFile(
+    SequentialFile *target,
+    const Slice &key
+  )
+    : target(target), key(key), offset(0)
+  {
+    assert(target != nullptr);
   }
 
-  Status s = pFile->Append(enc);
-  offset += data.size();
+  virtual ~McneSequentialFile() override { delete target; }
 
-  return s;
-}
+  virtual Status Read(
+    size_t n,
+    Slice *result,
+    char *scratch
+  ) override {
+    // The header (magic number) have skipped in the creation.
+    Status s = target->Read(n, result, scratch);
+    if (s.ok()) {
+      PerformXorOn(scratch, result, key, offset);
+      offset += n;
+    }
+    return s;
+  }
+
+  virtual Status Skip(uint64_t n) override {
+    Status s = target->Skip(n);
+    if (s.ok())
+      offset += n;
+    return s;
+  }
+
+private:
+  // No copy allowed.
+  McneSequentialFile(const McneSequentialFile &);
+  void operator=(const McneSequentialFile &);
+
+  SequentialFile *target;
+  Slice key;
+  size_t offset;
+};
+
+// XOR encrypted file.
+class DLLX McneRandomAccessFile: public RandomAccessFile {
+public:
+  explicit McneRandomAccessFile(
+    RandomAccessFile *target,
+    const Slice &key
+  )
+    : target(target), key(key)
+  {
+    assert(target != nullptr);
+  }
+
+  virtual ~McneRandomAccessFile() override { delete target; }
+
+  virtual Status Read(
+    uint64_t offset,
+    size_t n,
+    Slice *result,
+    char *scratch
+  ) const override {
+    Status s = target->Read(McneWrapper::kMagicNumSize + offset, n, result, scratch);
+    if (s.ok())
+      PerformXorOn(scratch, result, key, offset);
+    return s;
+  }
+
+private:
+  // No copy allowed.
+  McneRandomAccessFile(const McneRandomAccessFile &);
+  void operator=(const McneRandomAccessFile &);
+
+  RandomAccessFile *target;
+  Slice key;
+};
+
+// XOR encrypted file.
+class DLLX McneWritableFile: public WritableFile {
+public:
+  explicit McneWritableFile(
+    WritableFile *target,
+    const Slice &key
+  ) 
+    : target(target)
+    , key(key)
+    , offset(0)
+  {
+    assert(target != nullptr);
+  }
+
+  virtual ~McneWritableFile() override { delete target; }
+
+  virtual Status Append(
+    const Slice &data
+  ) override {
+    std::string localData = data.ToString();
+    Slice enc = {localData};
+    PerformXorOn(&localData[0], &enc, key, offset);
+    Status s = target->Append(enc);
+    offset += data.size();
+    return s;
+  }
+
+  virtual Status Close() override { return target->Close(); }
+  virtual Status Flush() override { return target->Flush(); }
+  virtual Status Sync() override { return target->Sync(); }
+
+private:
+  // No copy allowed.
+  McneWritableFile(const McneWritableFile &);
+  void operator=(const McneWritableFile &);
+
+  WritableFile *target;
+  Slice key;
+  size_t offset;
+};
 
 // - McneWrapper.
 
 McneWrapper::McneWrapper(
-  Env *pEnv,
+  Env *target,
   const Slice &key
 )
-  : EnvWrapper(pEnv)
+  : EnvWrapper(target)
   , key(key)
 {
-  assert(pEnv != nullptr);
+  assert(target != nullptr);
 }
 
 McneWrapper::McneWrapper(
@@ -319,7 +336,7 @@ Status McneWrapper::NewWritableFile(
     char buf[McneWrapper::kMagicNumSize];
     int num;
   } buf;
-  Slice magicNumber{buf.buf, McneWrapper::kMagicNumSize};
+  Slice magicNumber = {buf.buf, McneWrapper::kMagicNumSize};
 
   buf.num = McneWrapper::kMagicNum;
 
@@ -359,7 +376,7 @@ DLLX Status InferDB(
   if (files.empty())
     return Status::InvalidArgument(dbname, "does not exist");
 
-  // Find MANIFEST file name — this is the known plaintext.
+  // Find MANIFEST file name - this is the known plaintext.
   std::string manifestName;
   for (auto &f : files) {
     if (f.find("MANIFEST-") == 0) {
@@ -379,7 +396,7 @@ DLLX Status InferDB(
     return s;
 
   if (currentSize < McneWrapper::kMagicNumSize) {
-    // Too small to be encrypted — unencrypted database.
+    // Too small to be encrypted - unencrypted database.
     key->clear();
     return Status::OK();
   }
@@ -404,13 +421,13 @@ DLLX Status InferDB(
   memcpy(magic.buf, currentSlice.data(), McneWrapper::kMagicNumSize);
 
   if (magic.num != McneWrapper::kMagicNum) {
-    // Magic number absent — unencrypted database.
+    // Magic number absent - unencrypted database.
     key->clear();
     return Status::OK();
   }
 
-  // buf1: known plaintext — MANIFEST filename + newline.
-  // buf2: ciphertext — CURRENT content after the 4-byte magic number.
+  // buf1: known plaintext - MANIFEST filename + newline.
+  // buf2: ciphertext - CURRENT content after the 4-byte magic number.
   // key_stream[i] = buf1[i] ^ buf2[i], repeating with period 8.
   std::string buf1 = manifestName + "\n";
   const char *buf2 = currentSlice.data() + McneWrapper::kMagicNumSize;

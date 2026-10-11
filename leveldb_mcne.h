@@ -30,95 +30,6 @@
 
 namespace leveldb {
 
-// XOR encrypted file.
-class DLLX McneSequentialFile: public SequentialFile {
-public:
-  explicit McneSequentialFile(
-    SequentialFile *pFile,
-    const Slice &key);
-
-  virtual ~McneSequentialFile() override { delete pFile; }
-
-  virtual Status Read(
-    size_t n,
-    Slice *result,
-    char *scratch
-  ) override;
-
-  virtual Status Skip(
-    uint64_t n
-  ) override;
-
-  SequentialFile *target() const { return pFile; }
-
-private:
-  // No copy allowed.
-  McneSequentialFile(const McneSequentialFile &);
-  void operator=(const McneSequentialFile &);
-
-  SequentialFile *pFile;
-  const Slice &key;
-  size_t offset;
-  bool isEncrypted;
-};
-
-// XOR encrypted file.
-class DLLX McneRandomAccessFile: public RandomAccessFile {
-public:
-  explicit McneRandomAccessFile(
-    RandomAccessFile *pFile,
-    const Slice &key);
-
-  virtual ~McneRandomAccessFile() override { delete pFile; }
-
-  virtual Status Read(
-    uint64_t offset,
-    size_t n,
-    Slice *result,
-    char *scratch
-  ) const override;
-
-  RandomAccessFile *target() const { return pFile; }
-
-private:
-  // No copy allowed.
-  McneRandomAccessFile(const McneRandomAccessFile &);
-  void operator=(const McneRandomAccessFile &);
-
-  RandomAccessFile *pFile;
-  const Slice &key;
-  bool isEncrypted;
-};
-
-// XOR encrypted file.
-class DLLX McneWritableFile: public WritableFile {
-public:
-  explicit McneWritableFile(
-    WritableFile *pFile,
-    const Slice &key);
-
-  virtual ~McneWritableFile() override { delete pFile; }
-
-  virtual Status Append(
-    const Slice &data
-  ) override;
-  virtual Status Close() override { return pFile->Close(); }
-  virtual Status Flush() override { return pFile->Flush(); }
-  virtual Status Sync() override { return pFile->Sync(); }
-
-  WritableFile *target() const { return pFile; }
-
-private:
-  // No copy allowed.
-  McneWritableFile(const McneWritableFile &);
-  void operator=(const McneWritableFile &);
-
-  WritableFile *pFile;
-  const Slice &key;
-  size_t offset;
-  bool isEncrypted;
-};
-
 // XOR encrypted database.
 class DLLX McneWrapper: public EnvWrapper {
 public:
@@ -168,7 +79,7 @@ private:
   McneWrapper(const McneWrapper &);
   void operator=(const McneWrapper &);
 
-  const Slice &key;
+  Slice key;
 };
 
 // Automatically infer the encryption key from the database. The result is
