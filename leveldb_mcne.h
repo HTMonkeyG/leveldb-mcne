@@ -175,6 +175,8 @@ private:
 // stored in *key. Original contents of *key are dropped. This function won't
 // change the files.
 //
+// This function assumes that the key is 8-bytes length.
+//
 // If the database is unencrypted, a zero-lengthed string is stored. If the
 // database is corrupted, a Status::Corrupted is returned.
 //
@@ -186,8 +188,8 @@ extern DLLX Status InferDB(
   std::string *key);
 
 // Encrypt (or decrypt, decided on the database) the database with the given
-// key. Every files of the database except log files will be circularly XOR
-// encrypted with the given key.
+// key IN-PLACE. Every files of the database except log files will be circularly
+// XOR encrypted with the given key.
 extern DLLX Status EncryptDB(
   const std::string &dbname,
   const Options &options,

@@ -24,6 +24,11 @@
 
 #include "leveldb_mcne.h"
 
+// kTableMagicNumber was picked by running
+//    echo http://code.google.com/p/leveldb/ | sha1sum
+// and taking the leading 64 bits.
+static const uint64_t kTableMagicNumber = 0xdb4775248b80fb57ull;
+
 namespace leveldb {
 
 // XOR encryption.
@@ -338,6 +343,205 @@ Status McneWrapper::NewAppendableFile(
   return Status::NotSupported("NewAppendableFile", fname);
 }
 
-// namespace leveldb
+DLLX Status InferDB(
+  const std::string &dbname,
+  const Options &options,
+  std::string *key
+) {
+  Status s;
+  Env *env = options.env;
+  std::vector<std::string> files;
+
+  s = env->GetChildren(dbname, &files);
+  if (!s.ok())
+    return s;
+
+  if (files.empty())
+    return Status::InvalidArgument(dbname, "does not exist");
+
+  // Find MANIFEST file name — this is the known plaintext.
+  std::string manifestName;
+  for (auto &f : files) {
+    if (f.find("MANIFEST-") == 0) {
+      manifestName = f;
+      break;
+    }
+  }
+
+  if (manifestName.empty())
+    return Status::Corruption("MANIFEST file not found", dbname);
+
+  // Read CURRENT file raw bytes (options.env must not be McneWrapper).
+  std::string currentPath = dbname + "/CURRENT";
+  uint64_t currentSize;
+  s = env->GetFileSize(currentPath, &currentSize);
+  if (!s.ok())
+    return s;
+
+  if (currentSize < McneWrapper::kMagicNumSize) {
+    // Too small to be encrypted — unencrypted database.
+    key->clear();
+    return Status::OK();
+  }
+
+  SequentialFile *pCurrent;
+  s = env->NewSequentialFile(currentPath, &pCurrent);
+  if (!s.ok())
+    return s;
+
+  std::string currentBuf(currentSize, '\0');
+  Slice currentSlice;
+  s = pCurrent->Read(currentSize, &currentSlice, &currentBuf[0]);
+  delete pCurrent;
+  if (!s.ok())
+    return s;
+
+  // Check magic number.
+  union {
+    char buf[McneWrapper::kMagicNumSize];
+    int num;
+  } magic;
+  memcpy(magic.buf, currentSlice.data(), McneWrapper::kMagicNumSize);
+
+  if (magic.num != McneWrapper::kMagicNum) {
+    // Magic number absent — unencrypted database.
+    key->clear();
+    return Status::OK();
+  }
+
+  // buf1: known plaintext — MANIFEST filename + newline.
+  // buf2: ciphertext — CURRENT content after the 4-byte magic number.
+  // key_stream[i] = buf1[i] ^ buf2[i], repeating with period 8.
+  std::string buf1 = manifestName + "\n";
+  const char *buf2 = currentSlice.data() + McneWrapper::kMagicNumSize;
+  size_t buf2Len = currentSlice.size() - McneWrapper::kMagicNumSize;
+
+  if (buf1.size() != buf2Len)
+    return Status::Corruption("key inference failed: length mismatch");
+
+  if (buf1.size() < 8)
+    return Status::Corruption("key inference failed: plaintext too short");
+
+  // XOR to recover key stream.
+  std::string xorResult(buf1.size(), '\0');
+  for (size_t i = 0; i < buf1.size(); i++)
+    xorResult[i] = buf1[i] ^ buf2[i];
+
+  // Verify the key stream repeats with period 8.
+  for (size_t i = 8; i < xorResult.size(); i++) {
+    if (xorResult[i] != xorResult[i & 0x07])
+      return Status::Corruption("key inference failed: key stream not periodic");
+  }
+
+  *key = xorResult.substr(0, 8);
+  return Status::OK();
 }
 
+DLLX Status EncryptDB(
+  const std::string &dbname,
+  const Options &options,
+  const Slice &key
+) {
+  Status s;
+  Env *env = options.env;
+  std::vector<std::string> files;
+
+  if (key.size() == 0)
+    return Status::InvalidArgument("key", "must be non-empty");
+
+  s = env->GetChildren(dbname, &files);
+  if (!s.ok())
+    return s;
+
+  if (files.empty())
+    return Status::InvalidArgument(dbname, "does not exist");
+
+  for (auto &f : files) {
+    // Skip current/parent directory entries returned by GetChildren on Windows.
+    if (f == "." || f == "..")
+      continue;
+
+    std::string fpath = dbname + "/" + f;
+
+    if (!MaybeEncrypted(fpath))
+      continue;
+
+    // Skip entries that are not regular files (e.g. sub-directories).
+    uint64_t fsize;
+    s = env->GetFileSize(fpath, &fsize);
+    if (!s.ok()) {
+      s = Status::OK();
+      continue;
+    }
+
+    if (fsize == 0)
+      continue;
+
+    // Read the raw file content without going through McneWrapper.
+    SequentialFile *pIn;
+    s = env->NewSequentialFile(fpath, &pIn);
+    if (!s.ok())
+      return s;
+
+    std::string rawBuf(fsize, '\0');
+    Slice rawSlice;
+    s = pIn->Read(fsize, &rawSlice, &rawBuf[0]);
+    delete pIn;
+    if (!s.ok())
+      return s;
+
+    // Decide direction by checking for the magic number.
+    bool isEncrypted = false;
+    if (rawSlice.size() >= McneWrapper::kMagicNumSize) {
+      union {
+        char mbuf[McneWrapper::kMagicNumSize];
+        int num;
+      } magic;
+      memcpy(magic.mbuf, rawSlice.data(), McneWrapper::kMagicNumSize);
+      isEncrypted = (magic.num == McneWrapper::kMagicNum);
+    }
+
+    std::string newContent;
+    if (isEncrypted) {
+      // Decrypt: strip the magic header then XOR to recover plaintext.
+      newContent.assign(
+        rawSlice.data() + McneWrapper::kMagicNumSize,
+        rawSlice.size() - McneWrapper::kMagicNumSize);
+      Slice tmp(newContent);
+      PerformXorOn(&newContent[0], &tmp, key, 0);
+    } else {
+      // Encrypt: XOR the plaintext then prepend the magic header.
+      union {
+        char mbuf[McneWrapper::kMagicNumSize];
+        int num;
+      } magic;
+      magic.num = McneWrapper::kMagicNum;
+      std::string content = rawSlice.ToString();
+      Slice tmp(content);
+      PerformXorOn(&content[0], &tmp, key, 0);
+      newContent.assign(magic.mbuf, McneWrapper::kMagicNumSize);
+      newContent += content;
+    }
+
+    // Write back in-place; NewWritableFile truncates the existing file.
+    WritableFile *pOut;
+    s = env->NewWritableFile(fpath, &pOut);
+    if (!s.ok())
+      return s;
+
+    s = pOut->Append(Slice(newContent));
+    if (s.ok())
+      s = pOut->Close();
+    else
+      pOut->Close();
+    delete pOut;
+
+    if (!s.ok())
+      return s;
+  }
+
+  return Status::OK();
+}
+
+// namespace leveldb
+}
