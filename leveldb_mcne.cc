@@ -215,15 +215,6 @@ McneWrapper::McneWrapper(
   assert(target != nullptr);
 }
 
-McneWrapper::McneWrapper(
-  const Slice &key
-)
-  : EnvWrapper(Env::Default())
-  , key(key)
-{
-
-}
-
 McneWrapper::~McneWrapper() {
 
 }

@@ -48,10 +48,6 @@ public:
     Env *pEnv,
     const Slice &key = "88329851");
 
-  // Create a McneWrapper with default Env.
-  explicit McneWrapper(
-    const Slice &key = "88329851");
-
   ~McneWrapper() override;
 
   Status NewSequentialFile(
