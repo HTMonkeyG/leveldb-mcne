@@ -52,7 +52,7 @@ public:
   explicit McneWrapper(
     const Slice &key = "88329851");
 
-  ~McneWrapper() override { delete target(); }
+  ~McneWrapper() override;
 
   Status NewSequentialFile(
     const std::string &fname,

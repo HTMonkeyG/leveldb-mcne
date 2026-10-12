@@ -8,7 +8,7 @@
 #include "leveldb_mcne.h"
 
 leveldb::Options opt;
-opt.env = new McneWrapper(leveldb::Env::Default());
+opt.env = new leveldb::McneWrapper(leveldb::Env::Default());
 
 leveldb::DB db;
 leveldb::DB::Open(opt, "test/db", &db);
@@ -17,7 +17,7 @@ leveldb::DB::Open(opt, "test/db", &db);
 &emsp;也可将密钥设置为任意非0长度字节数组。若传入的密钥长度为0，则数据库不会被加密。若需要与网易版我的世界兼容则只能使用8字节长度密钥。
 ```cpp
 // 示例: 密钥为testaaab
-opt.env = new McneWrapper(
+opt.env = new leveldb::McneWrapper(
   leveldb::Env::Default()
   "testaaab"
 );

@@ -7,7 +7,7 @@
 *.exe
 *.bak
 *.ini
-test*
+test.*
 !libraries/leveldb/lib/*.a
 
 # Folders

@@ -224,6 +224,10 @@ McneWrapper::McneWrapper(
 
 }
 
+McneWrapper::~McneWrapper() {
+
+}
+
 Status McneWrapper::NewSequentialFile(
   const std::string &fname,
   SequentialFile **result
