@@ -24,14 +24,19 @@
 
 #include "leveldb_mcne.h"
 
+namespace leveldb {
+
+namespace {
+
 // kTableMagicNumber was picked by running
 //    echo http://code.google.com/p/leveldb/ | sha1sum
 // and taking the leading 64 bits.
 static const uint64_t kTableMagicNumber = 0xdb4775248b80fb57ull;
 
-namespace leveldb {
-
-namespace {
+union EncHeader {
+  char buf[McneWrapper::kMagicNumSize];
+  int num;
+};
 
 // XOR encryption.
 static void PerformXorOn(
@@ -53,7 +58,7 @@ static void PerformXorOn(
 }
 
 // Check whether a file needs to be encrypted or not.
-static bool MaybeEncrypted(
+static bool MayEncrypt(
   const std::string &fname
 ) {
   if (fname.length() < 4)
@@ -72,13 +77,10 @@ static bool MaybeEncrypted(
   return true;
 }
 
-// namespace <annoymous>
-}
-
 // - McneSequentialFile.
 
 // XOR encrypted file.
-class DLLX McneSequentialFile: public SequentialFile {
+class McneSequentialFile: public SequentialFile {
 public:
   McneSequentialFile(
     SequentialFile *target,
@@ -123,7 +125,7 @@ private:
 };
 
 // XOR encrypted file.
-class DLLX McneRandomAccessFile: public RandomAccessFile {
+class McneRandomAccessFile: public RandomAccessFile {
 public:
   explicit McneRandomAccessFile(
     RandomAccessFile *target,
@@ -158,7 +160,7 @@ private:
 };
 
 // XOR encrypted file.
-class DLLX McneWritableFile: public WritableFile {
+class McneWritableFile: public WritableFile {
 public:
   explicit McneWritableFile(
     WritableFile *target,
@@ -198,6 +200,9 @@ private:
   size_t offset;
 };
 
+// namespace <annoymous>
+}
+
 // - McneWrapper.
 
 McneWrapper::McneWrapper(
@@ -233,17 +238,14 @@ Status McneWrapper::NewSequentialFile(
     return s;
 
   // Unencrypted file or database.
-  if (key.size() == 0 || !MaybeEncrypted(fname)) {
+  if (key.size() == 0 || !MayEncrypt(fname)) {
     *result = pFile;
     return Status::OK();
   }
 
   // Check the magic number.
   Slice magicNumber;
-  union {
-    char buf[McneWrapper::kMagicNumSize];
-    int num;
-  } buf;
+  EncHeader buf;
 
   s = pFile->Read(
     McneWrapper::kMagicNumSize,
@@ -279,17 +281,14 @@ Status McneWrapper::NewRandomAccessFile(
     return s;
 
   // Unencrypted file or database.
-  if (key.size() == 0 || !MaybeEncrypted(fname)) {
+  if (key.size() == 0 || !MayEncrypt(fname)) {
     *result = pFile;
     return Status::OK();
   }
 
   // Check the magic number.
   Slice magicNumber;
-  union {
-    char buf[McneWrapper::kMagicNumSize];
-    int num;
-  } buf;
+  EncHeader buf;
 
   s = pFile->Read(
     0,
@@ -326,16 +325,13 @@ Status McneWrapper::NewWritableFile(
     return s;
 
   // Unencrypted file or database.
-  if (key.size() == 0 || !MaybeEncrypted(fname)) {
+  if (key.size() == 0 || !MayEncrypt(fname)) {
     *result = pFile;
     return Status::OK();
   }
 
   // Check the magic number.
-  union {
-    char buf[McneWrapper::kMagicNumSize];
-    int num;
-  } buf;
+  EncHeader buf;
   Slice magicNumber = {buf.buf, McneWrapper::kMagicNumSize};
 
   buf.num = McneWrapper::kMagicNum;
@@ -414,10 +410,7 @@ DLLX Status InferDB(
     return s;
 
   // Check magic number.
-  union {
-    char buf[McneWrapper::kMagicNumSize];
-    int num;
-  } magic;
+  EncHeader magic;
   memcpy(magic.buf, currentSlice.data(), McneWrapper::kMagicNumSize);
 
   if (magic.num != McneWrapper::kMagicNum) {
@@ -473,14 +466,14 @@ DLLX Status EncryptDB(
   if (files.empty())
     return Status::InvalidArgument(dbname, "does not exist");
 
-  for (auto &f : files) {
+  for (auto &f: files) {
     // Skip current/parent directory entries returned by GetChildren on Windows.
     if (f == "." || f == "..")
       continue;
 
     std::string fpath = dbname + "/" + f;
 
-    if (!MaybeEncrypted(fpath))
+    if (!MayEncrypt(fpath))
       continue;
 
     // Skip entries that are not regular files (e.g. sub-directories).
@@ -510,11 +503,8 @@ DLLX Status EncryptDB(
     // Decide direction by checking for the magic number.
     bool isEncrypted = false;
     if (rawSlice.size() >= McneWrapper::kMagicNumSize) {
-      union {
-        char mbuf[McneWrapper::kMagicNumSize];
-        int num;
-      } magic;
-      memcpy(magic.mbuf, rawSlice.data(), McneWrapper::kMagicNumSize);
+      EncHeader magic;
+      memcpy(magic.buf, rawSlice.data(), McneWrapper::kMagicNumSize);
       isEncrypted = (magic.num == McneWrapper::kMagicNum);
     }
 
@@ -528,15 +518,12 @@ DLLX Status EncryptDB(
       PerformXorOn(&newContent[0], &tmp, key, 0);
     } else {
       // Encrypt: XOR the plaintext then prepend the magic header.
-      union {
-        char mbuf[McneWrapper::kMagicNumSize];
-        int num;
-      } magic;
+      EncHeader magic;
       magic.num = McneWrapper::kMagicNum;
       std::string content = rawSlice.ToString();
       Slice tmp(content);
       PerformXorOn(&content[0], &tmp, key, 0);
-      newContent.assign(magic.mbuf, McneWrapper::kMagicNumSize);
+      newContent.assign(magic.buf, McneWrapper::kMagicNumSize);
       newContent += content;
     }
 
